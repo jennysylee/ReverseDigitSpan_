@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Reverse Digit Span Task</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f5f5f5;
+    }
+    #container {
+      max-width: 800px;
+      margin: 30px auto;
+      background-color: #ffffff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    #display {
+      font-size: 32px;
+      margin: 40px 0;
+      min-height: 50px;
+    }
+    #digit-keyboard {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .digit-btn {
+      width: 70px;
+      height: 70px;
+      font-size: 28px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      cursor: pointer;
+      background-color: #eaeaea;
+    }
+    .digit-btn:active {
+      background-color: #d0d0d0;
+    }
+    #control-buttons {
+      margin-top: 20px;
+    }
+    .ctrl-btn {
+      margin: 0 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+    }
+    #continue-btn {
+      background-color: #4CAF50;
+      color: #fff;
+    }
+    #clear-btn {
+      background-color: #f44336;
+      color: #fff;
+    }
+    #message {
+      font-size: 20px;
+      margin-top: 20px;
+      min-height: 30px;
+    }
+    #response-sequence {
+      font-size: 24px;
+      margin-top: 10px;
+      min-height: 30px;
+    }
+    #participant-form input[type="text"] {
+      width: 80px;
+      font-size: 20px;
+      text-align: center;
+    }
+    #participant-form button {
+      margin-left: 10px;
+      padding: 5px 15px;
+      font-size: 16px;
+    }
+    #final-screen {
+      margin-top: 30px;
+    }
+    #final-screen button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+    }
+    #download-btn {
+      background-color: #2196F3;
+      color: #fff;
+    }
+    #restart-btn {
+      background-color: #9E9E9E;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+<div id="container">
+  <h1>Reverse Digit Span Task</h1>
+
+  <!-- Participant ID input -->
+  <div id="participant-form">
+    <p>Please enter your 3-digit participant number to begin:</p>
+    <input type="text" id="participant-id" maxlength="3" placeholder="000">
+    <button id="start-btn">Start</button>
+    <p id="id-error" style="color:red;"></p>
+  </div>
+
+  <!-- Task content -->
+  <div id="task-area" style="display:none;">
+    <div id="display"></div>
+    <div id="response-sequence"></div>
+
+    <div id="digit-keyboard" style="display:none;">
+      <!-- digits added by JS -->
+    </div>
+
+    <div id="control-buttons" style="display:none;">
+      <button id="clear-btn" class="ctrl-btn" type="button">Clear</button>
+      <button id="continue-btn" class="ctrl-btn" type="button">Continue</button>
+    </div>
+
+    <div id="message"></div>
+  </div>
+
+  <!-- Final screen -->
+  <div id="final-screen" style="display:none;">
+    <h2>Task finished</h2>
+    <p id="final-score-text"></p>
+    <button id="download-btn" type="button">Download Results (CSV)</button>
+    <button id="restart-btn" type="button">Restart Experiment</button>
+  </div>
+</div>
+
+<script>
+// === State variables ===
+const displayEl = document.getElementById('display');
+const responseSeqEl = document.getElementById('response-sequence');
+const digitKeyboardEl = document.getElementById('digit-keyboard');
+const controlButtonsEl = document.getElementById('control-buttons');
+const continueBtn = document.getElementById('continue-btn');
+const clearBtn = document.getElementById('clear-btn');
+const messageEl = document.getElementById('message');
+
+const participantForm = document.getElementById('participant-form');
+const participantIdInput = document.getElementById('participant-id');
+const startBtn = document.getElementById('start-btn');
+const idError = document.getElementById('id-error');
+
+const taskArea = document.getElementById('task-area');
+const finalScreen = document.getElementById('final-screen');
+const finalScoreText = document.getElementById('final-score-text');
+const downloadBtn = document.getElementById('download-btn');
+const restartBtn = document.getElementById('restart-btn');
+
+let participantId = null;
+
+// PsyToolkit-like counters
+let testspan = 2;
+let spancorrect = 0;
+let spanerror = 0;
+let spancounter = 0;
+let best_so_far = 0;
+let digitspan = 0;
+
+// Trial-specific
+let currentNumberSequence = [];
+let digitsChosen = [];
+let rtsCurrentTrial = [];
+let clickedStimuliCurrentTrial = [];
+let trialData = [];
+
+let trialStartTime = null;
+let finishSelectionResolver = null;
+
+// === Utility functions ===
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Sample k distinct digits from 0–9
+function sampleDigits(k) {
+  const digits = [0,1,2,3,4,5,6,7,8,9];
+  const chosen = [];
+  for (let i = 0; i < k; i++) {
+    const idx = randInt(0, digits.length - 1);
+    chosen.push(digits[idx]);
+    digits.splice(idx, 1);
+  }
+  return chosen;
+}
+
+function arrayToCSV(rows) {
+  return rows.map(row =>
+    row.map(value => {
+      const v = String(value ?? '');
+      const safe = v.replace(/"/g, '""');
+      return `"${safe}"`;
+    }).join(',')
+  ).join('\r\n');
+}
+
+function downloadCSV(filename, csvText) {
+  const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// === UI setup ===
+function createDigitKeyboard() {
+  digitKeyboardEl.innerHTML = '';
+  for (let d = 1; d <= 9; d++) {
+    const btn = document.createElement('button');
+    btn.textContent = d;
+    btn.className = 'digit-btn';
+    btn.dataset.digit = d;
+    btn.type = 'button';
+    digitKeyboardEl.appendChild(btn);
+  }
+  const zeroBtn = document.createElement('button');
+  zeroBtn.textContent = 0;
+  zeroBtn.className = 'digit-btn';
+  zeroBtn.dataset.digit = 0;
+  zeroBtn.type = 'button';
+  digitKeyboardEl.appendChild(zeroBtn);
+}
+
+// === Main experiment flow ===
+async function runExperiment() {
+  // Reset global counters (in case of restart)
+  testspan = 2;
+  spancorrect = 0;
+  spanerror = 0;
+  spancounter = 0;
+  best_so_far = 0;
+  digitspan = 0;
+  trialData = [];
+
+  displayEl.textContent = '';
+  responseSeqEl.textContent = '';
+  messageEl.textContent = '';
+
+  taskArea.style.display = 'block';
+  finalScreen.style.display = 'none';
+
+  createDigitKeyboard();
+  attachDigitHandlers();
+
+  await runDigitBlock();
+}
+
+async function runDigitBlock() {
+  while (true) {
+    const continueRunning = await runSingleDigitTaskTrial();
+    if (!continueRunning) break;
+  }
+
+  digitspan = best_so_far;
+  displayEl.textContent = '';
+  responseSeqEl.textContent = '';
+  messageEl.textContent = '';
+
+  taskArea.style.display = 'none';
+  finalScreen.style.display = 'block';
+
+  finalScoreText.textContent =
+    "Your memory score is the sequence length you could remember correctly twice in a row. " +
+    "Your best sequence (digit span): " + best_so_far + ".";
+}
+
+async function runSingleDigitTaskTrial() {
+  // Stop if next span would exceed 9
+  if (testspan > 9) {
+    return false;
+  }
+
+  const spanThisTrial = testspan; // store before any updates
+
+  currentNumberSequence = sampleDigits(spanThisTrial);
+
+  // Ready screens
+  messageEl.textContent = '';
+  responseSeqEl.textContent = '';
+  displayEl.textContent = 'Memorize digits';
+  await sleep(1000);
+  displayEl.textContent = 'Get ready now!';
+  await sleep(800);
+  displayEl.textContent = '';
+
+  // Show digits one-by-one
+  for (let i = 0; i < currentNumberSequence.length; i++) {
+    displayEl.textContent = currentNumberSequence[i];
+    await sleep(800);
+    displayEl.textContent = '';
+    await sleep(200);
+  }
+
+  // Response phase
+  digitsChosen = [];
+  rtsCurrentTrial = [];
+  clickedStimuliCurrentTrial = [];
+  responseSeqEl.textContent = '';
+  digitKeyboardEl.style.display = 'flex';
+  controlButtonsEl.style.display = 'block';
+  messageEl.textContent = 'Click the digits in reverse order, then press Continue.';
+
+  trialStartTime = performance.now();
+  await waitForContinue();
+
+  digitKeyboardEl.style.display = 'none';
+  controlButtonsEl.style.display = 'none';
+
+  // Check correctness
+  const reversedSequence = [...currentNumberSequence].reverse();
+  const isCorrect = arraysEqual(digitsChosen, reversedSequence);
+  const error_status = isCorrect ? 0 : 1;
+
+  if (isCorrect) {
+    spancorrect += 1;
+    if (spancounter < 3) spancounter += 1;
+    if (spancorrect === 2) {
+      spancounter = 0;
+      spanerror = 0;
+      spancorrect = 0;
+      best_so_far = spanThisTrial;
+      testspan = spanThisTrial + 1;
+    }
+  } else {
+    spanerror += 1;
+    if (spancounter < 3) spancounter += 1;
+  }
+
+  messageEl.textContent = isCorrect ? 'CORRECT' : 'WRONG';
+
+  // Save trial
+  trialData.push({
+    participant_id: participantId,
+    testspan: spanThisTrial,
+    best_so_far: best_so_far,
+    error_status: error_status,
+    number_sequence_forward: currentNumberSequence.join(''),
+    number_sequence_reversed: reversedSequence.join(''),
+    digits_chosen: digitsChosen.join(''),
+    clicked_stimuli: clickedStimuliCurrentTrial.join(';'),
+    rts_ms: rtsCurrentTrial.join(';')
+  });
+
+  await sleep(2000);
+  messageEl.textContent = '';
+
+  if (spanerror === 2) {
+    digitspan = spanThisTrial;
+    return false;
+  }
+
+  if (testspan > 9) {
+    return false;
+  }
+
+  return true;
+}
+
+function arraysEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// === Response handling ===
+function attachDigitHandlers() {
+  // Use event delegation so handlers are not duplicated on restart
+  digitKeyboardEl.onclick = (e) => {
+    const btn = e.target;
+    if (!btn.classList.contains('digit-btn')) return;
+    const digit = parseInt(btn.dataset.digit, 10);
+    if (Number.isNaN(digit)) return;
+    handleDigitClick(digit);
+  };
+
+  clearBtn.onclick = () => {
+    handleClear();
+  };
+
+  continueBtn.onclick = () => {
+    if (digitsChosen.length === 0) {
+      messageEl.textContent = 'Please enter at least one digit before continuing.';
+      return;
+    }
+    finishSelection();
+  };
+}
+
+function handleDigitClick(digit) {
+  const now = performance.now();
+  if (trialStartTime == null) {
+    trialStartTime = now;
+  }
+  const rt = Math.round(now - trialStartTime);
+  trialStartTime = now;
+
+  digitsChosen.push(digit);
+  rtsCurrentTrial.push(rt);
+  clickedStimuliCurrentTrial.push(digit);
+  responseSeqEl.textContent = digitsChosen.join(' ');
+}
+
+function handleClear() {
+  if (digitsChosen.length === 0) return;
+  digitsChosen.pop();
+  rtsCurrentTrial.pop();
+  clickedStimuliCurrentTrial.pop();
+  responseSeqEl.textContent = digitsChosen.join(' ');
+}
+
+function waitForContinue() {
+  return new Promise(resolve => {
+    finishSelectionResolver = resolve;
+  });
+}
+
+function finishSelection() {
+  if (finishSelectionResolver) {
+    const resolver = finishSelectionResolver;
+    finishSelectionResolver = null;
+    resolver();
+  }
+}
+
+// === Participant ID & final actions ===
+startBtn.addEventListener('click', () => {
+  const id = participantIdInput.value.trim();
+  if (!/^\d{3}$/.test(id)) {
+    idError.textContent = 'Please enter exactly 3 digits (e.g., 005, 123).';
+    return;
+  }
+  idError.textContent = '';
+  participantId = id;
+  participantForm.style.display = 'none';
+  runExperiment();
+});
+
+downloadBtn.addEventListener('click', () => {
+  if (!trialData.length) return;
+
+  const header = [
+    'participant_id',
+    'testspan',
+    'best_so_far',
+    'error_status',
+    'number_sequence_forward',
+    'number_sequence_reversed',
+    'digits_chosen',
+    'clicked_stimuli',
+    'rts_ms'
+  ];
+  const rows = [header];
+
+  trialData.forEach(trial => {
+    rows.push([
+      trial.participant_id,
+      trial.testspan,
+      trial.best_so_far,
+      trial.error_status,
+      trial.number_sequence_forward,
+      trial.number_sequence_reversed,
+      trial.digits_chosen,
+      trial.clicked_stimuli,
+      trial.rts_ms
+    ]);
+  });
+
+  const csvText = arrayToCSV(rows);
+  const filename = `reverse_digit_span_${participantId}.csv`;
+  downloadCSV(filename, csvText);
+});
+
+restartBtn.addEventListener('click', () => {
+  // Reset everything to initial state
+  participantId = null;
+  participantIdInput.value = '';
+  idError.textContent = '';
+
+  testspan = 2;
+  spancorrect = 0;
+  spanerror = 0;
+  spancounter = 0;
+  best_so_far = 0;
+  digitspan = 0;
+  trialData = [];
+
+  displayEl.textContent = '';
+  responseSeqEl.textContent = '';
+  messageEl.textContent = '';
+
+  taskArea.style.display = 'none';
+  finalScreen.style.display = 'none';
+  participantForm.style.display = 'block';
+  participantIdInput.focus();
+});
+
+// Focus ID field on load
+participantIdInput.focus();
+</script>
+</body>
+</html>
